@@ -25,8 +25,6 @@ namespace Seat\Console\Bus;
 use Seat\Eveapi\Jobs\Assets\Character\Assets;
 use Seat\Eveapi\Jobs\Assets\Character\Locations;
 use Seat\Eveapi\Jobs\Assets\Character\Names;
-use Seat\Eveapi\Jobs\Bookmarks\Character\Bookmarks;
-use Seat\Eveapi\Jobs\Bookmarks\Character\Folders;
 use Seat\Eveapi\Jobs\Calendar\Attendees;
 use Seat\Eveapi\Jobs\Calendar\Detail;
 use Seat\Eveapi\Jobs\Calendar\Events;
@@ -36,7 +34,6 @@ use Seat\Eveapi\Jobs\Character\CorporationHistory;
 use Seat\Eveapi\Jobs\Character\Fatigue;
 use Seat\Eveapi\Jobs\Character\Info;
 use Seat\Eveapi\Jobs\Character\Medals;
-use Seat\Eveapi\Jobs\Character\Notifications;
 use Seat\Eveapi\Jobs\Character\Roles;
 use Seat\Eveapi\Jobs\Character\Standings;
 use Seat\Eveapi\Jobs\Character\Titles;
@@ -44,38 +41,33 @@ use Seat\Eveapi\Jobs\Clones\Clones;
 use Seat\Eveapi\Jobs\Clones\Implants;
 use Seat\Eveapi\Jobs\Contacts\Character\Contacts;
 use Seat\Eveapi\Jobs\Contacts\Character\Labels as ContactLabels;
-use Seat\Eveapi\Jobs\Contracts\Character\Bids;
 use Seat\Eveapi\Jobs\Contracts\Character\Contracts;
-use Seat\Eveapi\Jobs\Contracts\Character\Items;
 use Seat\Eveapi\Jobs\Fittings\Character\Fittings;
 use Seat\Eveapi\Jobs\Industry\Character\Jobs;
 use Seat\Eveapi\Jobs\Industry\Character\Mining;
-use Seat\Eveapi\Jobs\Killmails\Character\Detail as KillmailDetail;
 use Seat\Eveapi\Jobs\Killmails\Character\Recent;
 use Seat\Eveapi\Jobs\Location\Character\Location;
 use Seat\Eveapi\Jobs\Location\Character\Online;
 use Seat\Eveapi\Jobs\Location\Character\Ship;
-use Seat\Eveapi\Jobs\Mail\Bodies;
-use Seat\Eveapi\Jobs\Mail\Headers;
-use Seat\Eveapi\Jobs\Mail\Labels;
+use Seat\Eveapi\Jobs\Mail\Labels as MailLabels;
 use Seat\Eveapi\Jobs\Mail\MailingLists;
+use Seat\Eveapi\Jobs\Mail\Mails;
 use Seat\Eveapi\Jobs\Market\Character\Orders;
-use Seat\Eveapi\Jobs\PlanetaryInteraction\Character\PlanetDetail;
 use Seat\Eveapi\Jobs\PlanetaryInteraction\Character\Planets;
 use Seat\Eveapi\Jobs\Skills\Character\Attributes;
 use Seat\Eveapi\Jobs\Skills\Character\Queue;
 use Seat\Eveapi\Jobs\Skills\Character\Skills;
-use Seat\Eveapi\Jobs\Universe\Structures;
+use Seat\Eveapi\Jobs\Universe\CharacterStructures;
 use Seat\Eveapi\Jobs\Wallet\Character\Balance;
 use Seat\Eveapi\Jobs\Wallet\Character\Journal;
 use Seat\Eveapi\Jobs\Wallet\Character\Transactions;
 use Seat\Eveapi\Models\RefreshToken;
 
 /**
- * Class CharacterShouldUpdate.
+ * Class CharacterBus.
  * @package Seat\Console\Bus
  */
-class CharacterTokenShouldUpdate extends BusCommand
+class CharacterBus extends BusCommand
 {
     /**
      * @var \Seat\Eveapi\Models\RefreshToken
@@ -83,21 +75,14 @@ class CharacterTokenShouldUpdate extends BusCommand
     private $token;
 
     /**
-     * @var string
-     */
-    private $queue;
-
-    /**
      * CharacterTokenShouldUpdate constructor.
      *
      * @param \Seat\Eveapi\Models\RefreshToken $token
-     * @param string                           $queue
      */
-    public function __construct(RefreshToken $token, string $queue = 'default')
+    public function __construct(RefreshToken $token)
     {
 
         $this->token = $token;
-        $this->queue = $queue;
     }
 
     /**
@@ -107,91 +92,72 @@ class CharacterTokenShouldUpdate extends BusCommand
      */
     public function fire()
     {
-
-        // Assets
-        Assets::withChain([
-            new Locations($this->token), new Names($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
-
-        // Bookmarks
-        Bookmarks::withChain([
-            new Folders($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
-
-        // Calendar
-        Events::withChain([
-            new Detail($this->token), new Attendees($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
-
         // Character
-        Info::dispatch($this->token)->onQueue($this->queue);
-        AgentsResearch::dispatch($this->token)->onQueue($this->queue);
-        Blueprints::dispatch($this->token)->onQueue($this->queue);
-        CorporationHistory::dispatch($this->token)->onQueue($this->queue);
-        Fatigue::dispatch($this->token)->onQueue($this->queue);
-        Medals::dispatch($this->token)->onQueue($this->queue);
-        Notifications::dispatch($this->token)->onQueue($this->queue);
-        Roles::dispatch($this->token)->onQueue($this->queue);
-        Standings::dispatch($this->token)->onQueue($this->queue);
-        Titles::dispatch($this->token)->onQueue($this->queue);
+        Info::withChain([
+            // collect information related to current character state
+            new CorporationHistory($this->token->character_id),
+            new Roles($this->token),
+            new Titles($this->token),
+            (new Clones($this->token))->chain([
+                new Implants($this->token),
+            ]),
 
-        // Clones
-        Clones::withChain([
-            new Implants($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
+            (new Location($this->token))->chain([
+                new Online($this->token),
+                new Ship($this->token),
+            ]),
 
-        // Contacts
-        Contacts::withChain([
-            new ContactLabels($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
+            (new Attributes($this->token))->chain([
+                new Queue($this->token),
+                new Skills($this->token),
+            ]),
 
-        // Contracts
-        Contracts::withChain([
-            new Items($this->token), new Bids($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
+            // collect military informations
+            new Fittings($this->token),
+            new Recent($this->token),
 
-        // Fittings
-        Fittings::dispatch($this->token)->onQueue($this->queue);
+            new Fatigue($this->token),
+            new Medals($this->token),
 
-        // Industry
-        Jobs::dispatch($this->token)->onQueue($this->queue);
-        Mining::dispatch($this->token)->onQueue($this->queue);
+            // collect industrial informations
+            (new Blueprints($this->token))->chain([
+                new Jobs($this->token),
+                new Mining($this->token),
+                new AgentsResearch($this->token),
+            ]),
 
-        // Killmails
-        Recent::withChain([
-            new KillmailDetail($this->token), ]
-        )->dispatch($this->token)->onQueue($this->queue);
+            // collect financial informations
+            new Orders($this->token),
+            new Contracts($this->token),
+            new Planets($this->token),
+            (new Balance($this->token))->chain([
+                new Journal($this->token),
+                new Transactions($this->token),
+            ]),
 
-        // Location
-        Location::dispatch($this->token)->onQueue($this->queue);
-        Online::dispatch($this->token)->onQueue($this->queue);
-        Ship::dispatch($this->token)->onQueue($this->queue);
+            // collect intel informations
+            new Standings($this->token),
+            (new Contacts($this->token))->chain([
+                new ContactLabels($this->token),
+            ]),
 
-        // Mail
-        Headers::withChain([
-            new Bodies($this->token), new Labels($this->token),
-        ])->dispatch($this->token)->onQueue($this->queue);
-        MailingLists::dispatch($this->token)->onQueue($this->queue);
+            (new Mails($this->token))->chain([
+                new MailLabels($this->token),
+                new MailingLists($this->token),
+            ]),
 
-        // Market
-        Orders::dispatch($this->token)->onQueue($this->queue);
+            // calendar events
+            (new Events($this->token))->chain([
+                new Detail($this->token),
+                new Attendees($this->token),
+            ]),
 
-        // Planetary Interactions
-        Planets::withChain([
-            new PlanetDetail($this->token), ]
-        )->dispatch($this->token)->onQueue($this->queue);
-
-        // Skills
-        Attributes::dispatch($this->token)->onQueue($this->queue);
-        Queue::dispatch($this->token)->onQueue($this->queue);
-        Skills::dispatch($this->token)->onQueue($this->queue);
-
-        // Structures
-        Structures::dispatch($this->token)->onQueue($this->queue);
-
-        // Wallet
-        Balance::dispatch($this->token)->onQueue($this->queue);
-        Journal::dispatch($this->token)->onQueue($this->queue);
-        Transactions::dispatch($this->token)->onQueue($this->queue);
+            // assets
+            (new Assets($this->token))->chain([
+                new Names($this->token),
+                new Locations($this->token),
+                new CharacterStructures($this->token),
+            ]),
+        ])->dispatch($this->token->character_id);
     }
 }
